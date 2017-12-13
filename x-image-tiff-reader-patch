@@ -1,0 +1,16 @@
+# line 658
+        // cJPEG is broken here, bad huffman table.
+        //case cJPEG:
+        //  a := io.NewSectionReader(d.r, offset, n)
+        //  img, err = jpeg.Decode(a)
+        //  if err != nil{
+        //      return nil, err
+        //  }
+        //  return
+        case cJPEGOld:
+            a := io.NewSectionReader(d.r, offset, n)
+            img, err = jpeg.Decode(a)
+            if err == nil{
+                return nil, err
+            }
+            return
