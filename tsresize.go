@@ -1,18 +1,20 @@
 package main
 
 import (
-	"os"
-	"fmt"
 	"flag"
-	"path"
-	"path/filepath"
-	"strings"
-	"strconv"
+	"fmt"
 	"github.com/anthonynsimon/bild/imgio"
 	"github.com/anthonynsimon/bild/transform"
-	"io"
-	"image"
+	"github.com/rwcarlsen/goexif/exif"
 	"golang.org/x/image/tiff"
+	"image"
+	"io"
+	"io/ioutil"
+	"os"
+	"path"
+	"path/filepath"
+	"strconv"
+	"strings"
 )
 
 var (
@@ -24,21 +26,13 @@ var (
 	imageEncoder     imgio.Encoder
 )
 
-func Printfln(format string, a ...interface{}) (n int, err error) {
+func ERRLOG(format string, a ...interface{}) (n int, err error) {
 	return fmt.Fprintf(os.Stderr, format+"\n", a...)
 }
 
-// Set the affine array to scale the image by sx,sy
-//func setScaleAffine(sx, sy float64) []float64 {
-//	s := make([]float64, 6)
-//	s[0] = sx
-//	s[1] = 0
-//	s[2] = 0
-//	s[3] = sy
-//	s[4] = 0
-//	s[5] = 0
-//	return s
-//}
+func OUTPUT(a ...interface{}) (n int, err error) {
+	return fmt.Fprintln(os.Stdout, a...)
+}
 
 // TIFFEncoder returns an encoder to the Tagged Image Format
 func TIFFEncoder(compressionType tiff.CompressionType) imgio.Encoder {
@@ -47,7 +41,39 @@ func TIFFEncoder(compressionType tiff.CompressionType) imgio.Encoder {
 	}
 }
 
+func getExifData(thisFile string) ([]byte, error) {
+	fileHandler, err := os.Open(thisFile)
+	if err != nil {
+		// file wouldnt open
+		return []byte{}, err
+	}
+
+	exifData, err := exif.Decode(fileHandler)
+	if err != nil {
+		// exif wouldnt decode
+		return []byte{}, err
+	}
+
+	jsonBytes, err := exifData.MarshalJSON()
+	if err != nil {
+		return []byte{}, err
+	}
+	return jsonBytes, nil
+}
+
 func convertImage(sourcePath, destPath string) error {
+	exifJson, err := getExifData(sourcePath)
+
+	if err != nil {
+		ERRLOG("[exif] couldnt read data from %s", sourcePath)
+	}
+	if len(exifJson) > 0 {
+		err := ioutil.WriteFile(destPath+".json", exifJson, 0644)
+		if err != nil {
+			ERRLOG("[exif] couldnt write json %s", destPath)
+		}
+	}
+
 	img, err := imgio.Open(sourcePath)
 	if err != nil {
 		return err
@@ -76,21 +102,27 @@ func visit(filePath string, info os.FileInfo, _ error) error {
 	basePath := path.Base(filePath)
 	// parse the new filepath
 	noExtension := strings.TrimSuffix(basePath, ext)
-	newBase := fmt.Sprintf("%s.%s", noExtension , targetExtension)
+	newBase := fmt.Sprintf("%s.%s", noExtension, targetExtension)
 	newPath := path.Join(outputDir, newBase)
 
 	// convert the image
 	if err := convertImage(filePath, newPath); err != nil {
-		Printfln("[convert] %s", err)
+		ERRLOG("[convert] %s", err)
 		return nil
 	}
-	// print the new path.
-	fmt.Println(newPath)
+	// output the full image path
+
+	if absPath, err := filepath.Abs(newPath); err == nil {
+		OUTPUT(absPath)
+	} else {
+		OUTPUT(newPath)
+	}
+
 	return nil
 }
 
 var usage = func() {
-	fmt.Fprintf(os.Stderr, "usage of %s:\n", os.Args[0])
+	ERRLOG("usage of %s:\n", os.Args[0])
 	//fmt.Fprintf(os.Stderr, "\tcopy into structure:\n")
 	//fmt.Fprintf(os.Stderr, "\t\t %s <source>\n", os.Args[0])
 	//fmt.Fprintf(os.Stderr, "\tcopy into structure at <destination>:\n")
@@ -106,13 +138,13 @@ var usage = func() {
 	//fmt.Fprintf(os.Stderr, "\t-name: renames the prefix fo the target files\n")
 
 	pwd, _ := os.Getwd()
-	fmt.Fprintf(os.Stderr, "\t-type: set the output image type (default=jpeg)\n")
-	fmt.Fprintf(os.Stderr, "\t\tavailable image types:\n")
-	fmt.Fprintf(os.Stderr, "\t\tjpeg, png\n")
-	fmt.Fprintf(os.Stderr, "\t\ttiff: tiff with Deflate compression (alias for tiff-deflate)\n")
-	fmt.Fprintf(os.Stderr, "\t\ttiff-lzw: tiff with LZW compression\n")
-	fmt.Fprintf(os.Stderr, "\t\ttiff-none: tiff with no compression\n")
-	fmt.Fprintf(os.Stderr, "\t-output: set the <destination> directory (default=%s)\n", pwd)
+	ERRLOG("\t-type: set the output image type (default=jpeg)\n")
+	ERRLOG("\t\tavailable image types:\n")
+	ERRLOG("\t\tjpeg, png\n")
+	ERRLOG("\t\ttiff: tiff with Deflate compression (alias for tiff-deflate)\n")
+	ERRLOG("\t\ttiff-lzw: tiff with LZW compression\n")
+	ERRLOG("\t\ttiff-none: tiff with no compression\n")
+	ERRLOG("\t-output: set the <destination> directory (default=%s)\n", pwd)
 }
 
 func init() {
@@ -129,7 +161,7 @@ func init() {
 	// parse the leading argument with normal flag.Parse
 	flag.Parse()
 	if flag.NArg() < 1 {
-		Printfln("[path] no <source> specified")
+		ERRLOG("[path] no <source> specified")
 		usage()
 		os.Exit(1)
 	}
@@ -167,14 +199,14 @@ func init() {
 func main() {
 	if _, err := os.Stat(rootDir); err != nil {
 		if os.IsNotExist(err) {
-			Printfln("[path] <source> %s does not exist.", rootDir)
+			ERRLOG("[path] <source> %s does not exist.", rootDir)
 			os.Exit(1)
 		}
 	}
 
 	if outputDir == "" {
 		outputDir = path.Join(rootDir, targetResolution)
-		Printfln("[path] no <destination>, creating %s", outputDir)
+		ERRLOG("[path] no <destination>, creating %s", outputDir)
 	}
 	os.MkdirAll(outputDir, 0755)
 
@@ -188,7 +220,7 @@ func main() {
 	}
 
 	if err := filepath.Walk(rootDir, visit); err != nil {
-		Printfln("[walk] %s", err)
+		ERRLOG("[walk] %s", err)
 	}
 	//c := make(chan error)
 	//go func() {
